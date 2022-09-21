@@ -8,13 +8,14 @@ namespace Inventory.DTOs
         public record GrantItemsDTO(
             Guid UserId,
             Guid CatalogItemId,
+            [Range(1,int.MaxValue)]
             int Quantity);
 
         public record InventoryItemDTO(
             Guid CatalogItemId,
             string Name,
             string Description,
-            int Quentity,
+            int Quantity,
             DateTimeOffset AquiredDate);
 
         public record CatalogItemDTO(

@@ -16,12 +16,14 @@ namespace Inventory.Controllers
     [Route("items")]
     public class ItemsController : ControllerBase
     {
-        private readonly IEntityRepository<InventoryItem> itemsRepository;
-        private readonly CatalogClient catalogClient;
-        public ItemsController(IEntityRepository<InventoryItem> itemsRepository, CatalogClient catalogClient)
+        private readonly IEntityRepository<InventoryItem> inventoryItemsRepository;
+        //private readonly CatalogClient catalogClient;
+        private readonly IEntityRepository<CatalogItem> catalogItemsRepository;
+        public ItemsController(IEntityRepository<InventoryItem> itemsRepository, IEntityRepository<CatalogItem> catalogItemsRepository)
         {
-            this.itemsRepository = itemsRepository;
-            this.catalogClient = catalogClient;
+            this.inventoryItemsRepository = itemsRepository;
+            this.catalogItemsRepository = catalogItemsRepository;
+            //this.catalogClient = catalogClient;
         }
 
         [HttpGet]
@@ -32,16 +34,35 @@ namespace Inventory.Controllers
                 return BadRequest();
             }
 
-            var items = await itemsRepository.GetAllAsync(item => item.UserId == userId);
-            var catalogItems = await catalogClient.GetCatalogItemsAsync();
-            if(items.Any(item => !catalogItems.Select(catalogItem => catalogItem.Id).Contains(item.CatalogItemId)))
+            var inventoryItemEntities = await inventoryItemsRepository.GetAllAsync(item => item.UserId == userId);
+
+            var catalogItemIds = inventoryItemEntities.Select(item => item.CatalogItemId);
+
+            var catalogItemEntities = await catalogItemsRepository.GetAllAsync(item => catalogItemIds.Contains(item.Id));
+
+            var missingCatalogIds = new List<Guid>();
+            foreach(var catalogItemId in catalogItemIds)
             {
-                return BadRequest("catalog id not found in catalog service!");
+                if(!catalogItemEntities.Any(catalogItem => catalogItem.Id == catalogItemId))
+                {
+                    missingCatalogIds.Add(catalogItemId);
+                }
+            }
+            if(missingCatalogIds.Any())
+            {
+                return BadRequest($"catalog id's: * {string.Join(",",missingCatalogIds.ToArray())} * not found in catalog service!");
             }
 
-            var inventoryItemsDTO = items.Select(items =>
+            //var catalogItems = await catalogClient.GetCatalogItemsAsync();
+
+            //if (inventoryItemEntities.Any(item => !catalogItems.Select(catalogItem => catalogItem.Id).Contains(item.CatalogItemId)))
+            //{
+            //    return BadRequest("catalog id not found in catalog service!");
+            //}
+
+            var inventoryItemsDTO = inventoryItemEntities.Select(items =>
                 {
-                    var catalogItem = catalogItems.Single(catalogItem => 
+                    var catalogItem = catalogItemEntities.Single(catalogItem => 
                         catalogItem.Id == items.CatalogItemId
                     );
                     return items.AsDTO(catalogItem.Name, catalogItem.Description);
@@ -53,14 +74,23 @@ namespace Inventory.Controllers
         [HttpPost]
         public async Task<ActionResult> PostAsync(GrantItemsDTO grantItemsDTO)
         {
-            var catalogItems =  await catalogClient.GetCatalogItemsAsync();
+            if(grantItemsDTO.Quantity <= 0)
+                return BadRequest("Quantity can not be 0 or lower!");
 
-            if(catalogItems.Any(catalogItem => catalogItem.Id == grantItemsDTO.CatalogItemId) == false)
-            {
+
+            //var catalogItems =  await catalogClient.GetCatalogItemsAsync();
+            var catalogItem = await catalogItemsRepository.GetAsync(catalogItem => catalogItem.Id == grantItemsDTO.CatalogItemId);
+
+            if(catalogItem == null)
                 return BadRequest("CatalogItemId not found in catalog item database!");
-            }
 
-            var inventoryItem = await itemsRepository.GetAsync(item => item.UserId == grantItemsDTO.UserId && item.CatalogItemId == grantItemsDTO.CatalogItemId);
+
+            //if(catalogItems.Any(catalogItem => catalogItem.Id == grantItemsDTO.CatalogItemId) == false)
+            //{
+            //    return BadRequest("CatalogItemId not found in catalog item database!");
+            //}
+
+            var inventoryItem = await inventoryItemsRepository.GetAsync(item => item.UserId == grantItemsDTO.UserId && item.CatalogItemId == grantItemsDTO.CatalogItemId);
 
             if(inventoryItem == null)
             {
@@ -72,12 +102,12 @@ namespace Inventory.Controllers
                     AquiredDate = DateTimeOffset.UtcNow,
                 };
 
-                await itemsRepository.CreateAsync(newInventoryItem);
+                await inventoryItemsRepository.CreateAsync(newInventoryItem);
                 return Ok();
             }
 
             inventoryItem.Quantity += grantItemsDTO.Quantity;
-            await itemsRepository.UpdateAsync(inventoryItem);
+            await inventoryItemsRepository.UpdateAsync(inventoryItem);
 
             return Ok();
         }

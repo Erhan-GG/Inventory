@@ -1,3 +1,4 @@
+using Common.MassTransit;
 using Common.MongoDB;
 using Inventory.Clients;
 using Inventory.Entities;
@@ -22,6 +23,8 @@ namespace Inventory
 {
     public class Startup
     {
+        private const string AllowedOriginSetting = "AllowedOrigin";
+
         public Startup(IConfiguration configuration)
         {
             Configuration = configuration;
@@ -34,20 +37,61 @@ namespace Inventory
         {
 
             services.AddMongo()
-                    .AddMongoRepository<InventoryItem>("inventoryitems");
+                    .AddMongoRepository<InventoryItem>("inventoryitems")
+                    .AddMongoRepository<CatalogItem>("catalogitems")
+                    .AddMassTransitWithRabbitMQ();
 
+            //AddCatalogClient(services);
+
+            services.AddControllers();
+            services.AddSwaggerGen(c =>
+            {
+                c.SwaggerDoc("v1", new OpenApiInfo { Title = "Inventory", Version = "v1" });
+            });
+        }
+        
+        // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
+        public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
+        {
+            if (env.IsDevelopment())
+            {
+                app.UseDeveloperExceptionPage();
+                app.UseSwagger();
+                app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "Inventory v1"));
+                app.UseCors(builder =>
+                {
+                    builder.WithOrigins(Configuration[AllowedOriginSetting])
+                           .AllowAnyHeader()
+                           .AllowAnyMethod();
+                });
+            }
+
+            app.UseHttpsRedirection();
+
+            app.UseRouting();
+
+            app.UseAuthorization();
+
+            app.UseEndpoints(endpoints =>
+            {
+                endpoints.MapControllers();
+            });
+        }
+
+        private static void AddCatalogClient(IServiceCollection services)
+        {
             Random jitter = new Random();
 
             services.AddHttpClient<CatalogClient>(client =>
-                {
-                    client.BaseAddress = new Uri("https://localhost:5001");
-                }
+            {
+                client.BaseAddress = new Uri("https://localhost:5001");
+            }
             )
             .AddTransientHttpErrorPolicy(builder =>
                 builder.Or<TimeoutRejectedException>().WaitAndRetryAsync(
                     3,
-                    retryAttemp => TimeSpan.FromSeconds(Math.Pow(2,retryAttemp))
-                        +TimeSpan.FromMilliseconds(jitter.Next(0,1000)),
+                    retryAttemp => TimeSpan.FromSeconds(Math.Pow(2, retryAttemp))
+                        + TimeSpan.FromMilliseconds(jitter.Next(0, 1000)),
                     onRetry: (outcome, timespan, retryAttemp) =>
                     {
                         var serviceProvider = services.BuildServiceProvider();
@@ -75,34 +119,6 @@ namespace Inventory
                     )
                 )
             .AddPolicyHandler(Policy.TimeoutAsync<HttpResponseMessage>(1));
-
-            services.AddControllers();
-            services.AddSwaggerGen(c =>
-            {
-                c.SwaggerDoc("v1", new OpenApiInfo { Title = "Inventory", Version = "v1" });
-            });
-        }
-
-        // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
-        public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
-        {
-            if (env.IsDevelopment())
-            {
-                app.UseDeveloperExceptionPage();
-                app.UseSwagger();
-                app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "Inventory v1"));
-            }
-
-            app.UseHttpsRedirection();
-
-            app.UseRouting();
-
-            app.UseAuthorization();
-
-            app.UseEndpoints(endpoints =>
-            {
-                endpoints.MapControllers();
-            });
         }
     }
 }
